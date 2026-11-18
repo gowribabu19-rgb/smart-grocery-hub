@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Smart Grocery List Scanner</title>
+<style>
+  body{font-family:Roboto,Arial,sans-serif;background:#f0f2f5;margin:0;padding:16px;color:#222}
+  .card{background:#fff;border-radius:18px;padding:20px;max-width:520px;margin:0 auto;box-shadow:0 4px 14px rgba(0,0,0,.08)}
+  h1{font-size:22px;text-align:center;margin:0 0 4px}
+  .sub{text-align:center;color:#777;margin-bottom:16px}
+  .btn{display:block;width:100%;padding:14px;border:0;border-radius:12px;font-size:17px;color:#fff;cursor:pointer;margin-top:12px}
+  .blue{background:#0a7cff}.green{background:#10b981}.grey{background:#6b7280}
+  .btn:disabled{opacity:.5}
+  img#preview{width:100%;border-radius:12px;margin-top:12px;display:none}
+  .box{border-left:6px solid #10b981;background:#effcf5;border-radius:12px;padding:14px;margin-top:14px}
+  .warn{border-color:#f59e0b;background:#fffbea}
+  table{width:100%;border-collapse:collapse;margin-top:8px;font-size:15px}
+  td,th{padding:6px 4px;border-bottom:1px solid #e5e7eb;text-align:left}
+  .best{font-weight:bold;color:#047857}
+  h3{margin:14px 0 4px}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>📝 Monthly List Scanner</h1>
+  <div class="sub">Upload your handwritten list or bill</div>
+
+  <input type="file" id="file" accept="image/*" hidden>
+  <button class="btn blue" id="pick">📷 Take / Choose Photo</button>
+  <img id="preview" alt="preview">
+  <button class="btn green" id="go" disabled>⚡ Find Cheapest Plan</button>
+  <a href="index.html"><button class="btn grey">⬅ Back to Barcode Scanner</button></a>
+
+  <div id="out"></div>
+</div>
+
+<script>
+const WEBHOOK = "https://s30.n8n.alexaiautomations.com/webhook/sg03-list-scan";
+const fileInput = document.getElementById("file");
+const preview = document.getElementById("preview");
+const goBtn = document.getElementById("go");
+const out = document.getElementById("out");
+let imageBase64 = "";
+
+document.getElementById("pick").onclick = () => fileInput.click();
+
+fileInput.onchange = () => {
+  const f = fileInput.files[0];
+  if (!f) return;
+  const img = new Image();
+  img.onload = () => {
+    const max = 1280;
+    const scale = Math.min(1, max / Math.max(img.width, img.height));
+    const c = document.createElement("canvas");
+    c.width = img.width * scale;
+    c.height = img.height * scale;
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    const url = c.toDataURL("image/jpeg", 0.8);
+    preview.src = url;
+    preview.style.display = "block";
+    imageBase64 = url.split(",")[1];
+    goBtn.disabled = false;
+    out.innerHTML = "";
+  };
+  img.src = URL.createObjectURL(f);
+};
+
+function el(tag, text, cls) {
+  const e = document.createElement(tag);
+  if (text !== undefined) e.textContent = text;
+  if (cls) e.className = cls;
+  return e;
+}
+
+function show(d) {
+  out.innerHTML = "";
+  if (!d.ok) {
+    const b = el("div", "", "box warn");
+    b.appendChild(el("b", "⚠️ " + (d.message || "Something went wrong")));
+    out.appendChild(b);
+    return;
+  }
+  const rec = el("div", "", "box");
+  rec.appendChild(el("b", "✅ " + d.recommendation));
+  out.appendChild(rec);
+
+  out.appendChild(el("h3", "🧾 Items found"));
+  const ul = el("ul");
+  d.matched.forEach(m => ul.appendChild(el("li", m.asked + " → " + m.product + " × " + m.packs)));
+  out.appendChild(ul);
+
+  if (d.unmatched && d.unmatched.length) {
+    const w = el("div", "", "box warn");
+    w.appendChild(el("span", "Not in our database: " + d.unmatched.join(", ")));
+    out.appendChild(w);
+  }
+
+  out.appendChild(el("h3", "🏪 Single-store totals"));
+  const t = el("table");
+  const hr = el("tr");
+  ["Store", "Items", "Delivery", "Total"].forEach(h => hr.appendChild(el("th", h)));
+  t.appendChild(hr);
+  d.all_stores.forEach((s, i) => {
+    const r = el("tr", "", i === 0 ? "best" : "");
+    r.appendChild(el("td", s.store + (s.missing_items ? " (" + s.missing_items + " missing)" : "")));
+    r.appendChild(el("td", "₹" + s.subtotal));
+    r.appendChild(el("td", "₹" + s.delivery));
+    r.appendChild(el("td", "₹" + s.total));
+    t.appendChild(r);
+  });
+  out.appendChild(t);
+
+  if (d.plan2) {
+    out.appendChild(el("h3", "✂️ Split plan: ₹" + d.plan2.total));
+    d.plan2.parts.forEach(p => {
+      out.appendChild(el("div", p.store + " (₹" + p.total + "): " + p.items.join(", ")));
+    });
+  }
+  if (d.savings_vs_dearest > 0) {
+    out.appendChild(el("h3", "💰 You save ₹" + d.savings_vs_dearest + " vs the dearest store"));
+  }
+}
+
+goBtn.onclick = async () => {
+  goBtn.disabled = true;
+  out.innerHTML = "";
+  out.appendChild(el("div", "⏳ Reading your list... (10-20 seconds)", "box warn"));
+  try {
+    const res = await fetch(WEBHOOK, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ image_base64: imageBase64, mime_type: "image/jpeg" })
+    });
+    show(await res.json());
+  } catch (e) {
+    out.innerHTML = "";
+    out.appendChild(el("div", "❌ Could not reach the server. Check your internet and try again.", "box warn"));
+  }
+  goBtn.disabled = false;
+};
+</script>
+</body>
+</html>
