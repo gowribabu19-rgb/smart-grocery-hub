@@ -4,6 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Smart Grocery Scanner</title>
+  <link rel="manifest" href="manifest.json">
   <script src="https://unpkg.com/html5-qrcode"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; margin: 0; padding: 16px; text-align: center; }
@@ -32,15 +33,15 @@
   <h1>🛒 Smart Grocery Scanner</h1>
   <p style="color:#6b7280; font-size:14px; margin-top:-4px;">Scan barcode or compare web prices</p>
 
-  <!-- 1. BARCODE SCANNER SECTION -->
+  <!-- BARCODE SCANNER SECTION -->
   <div id="reader"></div>
   <button id="start-btn" onclick="startScanner()">📷 Start Camera Scanner</button>
 
   <div class="divider"><span>OR</span></div>
 
-  <!-- 2. WEB PRICE COMPARISON SEARCH SECTION -->
+  <!-- WEB PRICE COMPARISON SEARCH SECTION -->
   <label>🔍 Compare Prices Across Platforms:</label>
-  <input type="text" id="web-search-query" placeholder="Paste Amazon title or type product name...">
+  <input type="text" id="web-search-query" placeholder="Paste product link or name...">
   <button class="compare-btn" onclick="compareWebPrices()">⚡ Compare Across Stores</button>
 
   <!-- RESULTS DISPLAY CARD -->
@@ -49,6 +50,26 @@
 
 <script>
   const N8N_GATEWAY_URL = 'https://s30.n8n.alexaiautomations.com/webhook/sg02-gateway';
+
+  // 📱 AUTOMATIC MOBILE SHARE-TARGET HANDLER
+  window.addEventListener('DOMContentLoaded', () => {
+    const params = new URLSearchParams(window.location.search);
+    const sharedText = params.get('text') || params.get('title') || params.get('url');
+    
+    if (sharedText) {
+      // Clean up URLs and extract primary product keywords
+      let cleaned = sharedText.replace(/https?:\/\/\S+/g, '').replace(/[^a-zA-Z0-9\s]/g, ' ').trim();
+      if (!cleaned && params.get('title')) {
+        cleaned = params.get('title').replace(/[^a-zA-Z0-9\s]/g, ' ').trim();
+      }
+      
+      const words = cleaned.split(/\s+/).slice(0, 5).join(' '); // Keep top 5 keywords for clean matching
+      if (words) {
+        document.getElementById('web-search-query').value = words;
+        compareWebPrices();
+      }
+    }
+  });
 
   const html5QrCode = new Html5Qrcode("reader");
   const resultCard = document.getElementById('result');
@@ -91,17 +112,17 @@
     }
   }
 
-  // 🌐 NEW: WEB PRICE COMPARISON CALL TO N8N
+  // 🌐 WEB PRICE COMPARISON CALL TO N8N
   async function compareWebPrices() {
     const query = document.getElementById('web-search-query').value.trim();
     if (!query) {
-      alert('Please enter a product name or paste a link/title!');
+      alert('Please enter a product name or link!');
       return;
     }
 
     resultCard.style.display = 'block';
     resultCard.className = 'result-card not-found';
-    resultCard.innerHTML = `<p>⏳ Checking live prices across Amazon, Blinkit, Zepto, and BigBasket for <strong>${query}</strong>...</p>`;
+    resultCard.innerHTML = `<p>⏳ Searching live prices across Amazon, Blinkit, Zepto, and BigBasket for <strong>${query}</strong>...</p>`;
 
     try {
       const response = await fetch(N8N_GATEWAY_URL, {
@@ -114,14 +135,14 @@
       renderComparisonResult(data);
     } catch (err) {
       resultCard.className = 'result-card banned';
-      resultCard.innerHTML = `<p>❌ Price comparison service currently connecting. Waiting for n8n configuration.</p>`;
+      resultCard.innerHTML = `<p>❌ Price comparison failed to connect. Check n8n status.</p>`;
     }
   }
 
   function renderComparisonResult(data) {
     if (!data.results || data.results.length === 0) {
       resultCard.className = 'result-card not-found';
-      resultCard.innerHTML = `<h3>🔍 No Price Matches Found</h3><p>Could not find price listings for this item. Check spelling.</p>`;
+      resultCard.innerHTML = `<h3>🔍 No Price Matches Found</h3><p>Could not find price listings for this item. Try fewer keywords.</p>`;
       return;
     }
 
