@@ -15,6 +15,7 @@
     .safe { border-left: 6px solid #2ecc71; background: #f0fdf4; }
     .banned { border-left: 6px solid #e74c3c; background: #fef2f2; }
     .not-found { border-left: 6px solid #f59e0b; background: #fffbeb; }
+    .compare-card { border-left: 6px solid #3b82f6; background: #eff6ff; }
     .banned-tag { background: #fee2e2; color: #dc2626; padding: 3px 8px; border-radius: 6px; font-weight: 600; font-size: 12px; display: inline-block; margin: 2px; }
     button { background: #007aff; color: white; border: none; padding: 12px 20px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; width: 100%; }
     button.compare-btn { background: #10b981; margin-top: 6px; }
@@ -33,37 +34,53 @@
   <h1>🛒 Smart Grocery Scanner</h1>
   <p style="color:#6b7280; font-size:14px; margin-top:-4px;">Scan barcode or compare web prices</p>
 
-  <!-- BARCODE SCANNER SECTION -->
+  <!-- BARCODE SCANNER -->
   <div id="reader"></div>
   <button id="start-btn" onclick="startScanner()">📷 Start Camera Scanner</button>
 
   <div class="divider"><span>OR</span></div>
 
-  <!-- WEB PRICE COMPARISON SEARCH SECTION -->
+  <!-- WEB PRICE SEARCH -->
   <label>🔍 Compare Prices Across Platforms:</label>
   <input type="text" id="web-search-query" placeholder="Paste product link or name...">
   <button class="compare-btn" onclick="compareWebPrices()">⚡ Compare Across Stores</button>
 
-  <!-- RESULTS DISPLAY CARD -->
+  <!-- SAFETY RESULT CARD -->
   <div id="result" class="result-card"></div>
+
+  <!-- PRICE COMPARISON CARD (separate, so safety result stays visible) -->
+  <div id="compare-result" class="result-card"></div>
 </div>
 
 <script>
   const N8N_GATEWAY_URL = 'https://s30.n8n.alexaiautomations.com/webhook/sg02-gateway';
 
-  // 📱 AUTOMATIC MOBILE SHARE-TARGET HANDLER
+  const html5QrCode = new Html5Qrcode("reader");
+  const resultCard = document.getElementById('result');
+  const compareCard = document.getElementById('compare-result');
+  let lastScannedBarcode = '';
+
+  // Prevent broken HTML when product names contain quotes or symbols
+  function escapeHtml(str) {
+    return String(str || '')
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
+  }
+
+  // MOBILE SHARE-TARGET LISTENER
   window.addEventListener('DOMContentLoaded', () => {
     const params = new URLSearchParams(window.location.search);
     const sharedText = params.get('text') || params.get('title') || params.get('url');
-    
+
     if (sharedText) {
-      // Clean up URLs and extract primary product keywords
       let cleaned = sharedText.replace(/https?:\/\/\S+/g, '').replace(/[^a-zA-Z0-9\s]/g, ' ').trim();
       if (!cleaned && params.get('title')) {
         cleaned = params.get('title').replace(/[^a-zA-Z0-9\s]/g, ' ').trim();
       }
-      
-      const words = cleaned.split(/\s+/).slice(0, 5).join(' '); // Keep top 5 keywords for clean matching
+      const words = cleaned.split(/\s+/).slice(0, 5).join(' ');
       if (words) {
         document.getElementById('web-search-query').value = words;
         compareWebPrices();
@@ -71,13 +88,11 @@
     }
   });
 
-  const html5QrCode = new Html5Qrcode("reader");
-  const resultCard = document.getElementById('result');
-  let lastScannedBarcode = '';
-
+  // ================= BARCODE SCANNER =================
   function startScanner() {
     document.getElementById('start-btn').style.display = 'none';
     resultCard.style.display = 'none';
+    compareCard.style.display = 'none';
     const config = { fps: 10, qrbox: { width: 250, height: 250 } };
 
     html5QrCode.start({ facingMode: "environment" }, config, (decodedText) => {
@@ -95,7 +110,7 @@
   async function analyzeBarcode(barcode) {
     resultCard.style.display = 'block';
     resultCard.className = 'result-card not-found';
-    resultCard.innerHTML = `<p>⏳ Checking global database for <strong>${barcode}</strong>...</p>`;
+    resultCard.innerHTML = `<p>⏳ Checking global database for <strong>${escapeHtml(barcode)}</strong>...</p>`;
 
     try {
       const response = await fetch(N8N_GATEWAY_URL, {
@@ -103,7 +118,6 @@
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ mode: 'barcode', barcode: barcode })
       });
-
       const data = await response.json();
       renderResult(data, barcode);
     } catch (err) {
@@ -112,68 +126,13 @@
     }
   }
 
-  // 🌐 WEB PRICE COMPARISON CALL TO N8N
-  async function compareWebPrices() {
-    const query = document.getElementById('web-search-query').value.trim();
-    if (!query) {
-      alert('Please enter a product name or link!');
-      return;
-    }
-
-    resultCard.style.display = 'block';
-    resultCard.className = 'result-card not-found';
-    resultCard.innerHTML = `<p>⏳ Searching live prices across Amazon, Blinkit, Zepto, and BigBasket for <strong>${query}</strong>...</p>`;
-
-    try {
-      const response = await fetch(N8N_GATEWAY_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ mode: 'compare_web', query: query })
-      });
-
-      const data = await response.json();
-      renderComparisonResult(data);
-    } catch (err) {
-      resultCard.className = 'result-card banned';
-      resultCard.innerHTML = `<p>❌ Price comparison failed to connect. Check n8n status.</p>`;
-    }
-  }
-
-  function renderComparisonResult(data) {
-    if (!data.results || data.results.length === 0) {
-      resultCard.className = 'result-card not-found';
-      resultCard.innerHTML = `<h3>🔍 No Price Matches Found</h3><p>Could not find price listings for this item. Try fewer keywords.</p>`;
-      return;
-    }
-
-    let rowsHtml = '';
-    data.results.forEach((item, index) => {
-      const isBest = index === 0;
-      rowsHtml += `
-        <div class="store-row">
-          <div>
-            <strong>${item.store}</strong> ${isBest ? '🏆' : ''}<br>
-            <span style="font-size:12px; color:#6b7280;">${item.title || ''}</span>
-          </div>
-          <div class="store-price ${isBest ? 'cheapest' : ''}">₹${item.price}</div>
-        </div>
-      `;
-    });
-
-    resultCard.className = 'result-card safe';
-    resultCard.innerHTML = `
-      <h3 style="margin-top:0; color:#059669;">💰 Best Price: ₹${data.results[0].price}</h3>
-      <p style="font-size:13px; color:#374151; margin-bottom:12px;">Found across ${data.results.length} platforms:</p>
-      ${rowsHtml}
-    `;
-  }
-
+  // ================= SAFETY RESULT =================
   function renderResult(data, barcode) {
     if (!data.found) {
       resultCard.className = "result-card not-found";
       resultCard.innerHTML = `
         <h3 style="margin-top:0; color:#b45309;">📦 Product Not In Database</h3>
-        <p style="font-size:13px; color:#6b7280;">Barcode: <code>${barcode}</code></p>
+        <p style="font-size:13px; color:#6b7280;">Barcode: <code>${escapeHtml(barcode)}</code></p>
         <hr style="border:none; border-top:1px solid #fde68a; margin:12px 0;">
         <p style="font-size:13px; font-weight:600;">✨ Quick-Add to your Google Sheet:</p>
         <label>Product Name:
@@ -185,26 +144,101 @@
         <label>Store Name:
           <input type="text" id="quick-store" placeholder="e.g., Apollo Pharmacy">
         </label>
-        <button onclick="saveNewProduct('${barcode}')">💾 Save to Smart Grocery Sheet</button>
+        <button onclick="saveNewProduct('${escapeHtml(barcode)}')">💾 Save to Smart Grocery Sheet</button>
       `;
       return;
     }
 
+    // Auto-fill search box with Brand + Product Name for 1-click compare
+    const brandPart = (data.brand && data.brand !== 'Standard Brand' && data.brand !== 'Catalog Product') ? data.brand + ' ' : '';
+    document.getElementById('web-search-query').value = (brandPart + (data.product_name || '')).trim();
+
+    const bannedList = Array.isArray(data.banned_found) ? data.banned_found : [];
+
     resultCard.className = "result-card " + (data.is_safe ? "safe" : "banned");
     resultCard.innerHTML = `
-      <h2 style="margin-top:0; font-size:18px;">${data.product_name}</h2>
-      <p style="font-size:13px; margin:4px 0;"><strong>Brand:</strong> ${data.brand || 'N/A'} | <strong>Size:</strong> ${data.net_weight || 'N/A'}</p>
+      <h2 style="margin-top:0; font-size:18px;">${escapeHtml(data.product_name)}</h2>
+      <p style="font-size:13px; margin:4px 0;"><strong>Brand:</strong> ${escapeHtml(data.brand || 'N/A')} | <strong>Size:</strong> ${escapeHtml(data.net_weight || 'Standard Pack')}</p>
       <p style="font-size:14px; font-weight:700; margin:8px 0; color:${data.is_safe ? '#16a34a' : '#dc2626'};">
         ${data.is_safe ? "✅ SAFE TO BUY - No banned chemicals" : "⚠️ WARNING: Banned Ingredients Detected"}
       </p>
-      ${!data.is_safe ? `<div style="margin:6px 0;">${data.banned_found.map(b => `<span class="banned-tag">${b}</span>`).join(' ')}</div>` : ''}
+      ${!data.is_safe ? `<div style="margin:6px 0;">${bannedList.map(b => `<span class="banned-tag">${escapeHtml(b)}</span>`).join(' ')}</div>` : ''}
       <details style="margin-top:10px; font-size:12px; color:#4b5563;">
         <summary style="cursor:pointer; font-weight:600;">View Ingredients</summary>
-        <p style="margin-top:6px; line-height:1.4;">${data.ingredients_text || 'No ingredients listed'}</p>
+        <p style="margin-top:6px; line-height:1.4;">${escapeHtml(data.ingredients_text || 'No ingredients listed')}</p>
       </details>
+
+      <!-- 1-CLICK PRICE COMPARISON -->
+      <hr style="border:none; border-top:1px solid #e5e7eb; margin:14px 0;">
+      <button class="compare-btn" onclick="compareWebPrices()">⚡ Compare Prices for This Product</button>
     `;
   }
 
+  // ================= WEB PRICE COMPARISON =================
+  async function compareWebPrices() {
+    const query = document.getElementById('web-search-query').value.trim();
+    if (!query) {
+      alert('Please enter a product name or link!');
+      return;
+    }
+
+    compareCard.style.display = 'block';
+    compareCard.className = 'result-card compare-card';
+    compareCard.innerHTML = `<p>⏳ Searching live prices across Amazon, Blinkit, Zepto, and BigBasket for <strong>${escapeHtml(query)}</strong>...</p>`;
+    compareCard.scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    try {
+      const response = await fetch(N8N_GATEWAY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'compare_web', query: query })
+      });
+      const data = await response.json();
+      renderComparisonResult(data, query);
+    } catch (err) {
+      compareCard.className = 'result-card banned';
+      compareCard.innerHTML = `<p>❌ Price comparison failed to connect. Check n8n status.</p>`;
+    }
+  }
+
+  function renderComparisonResult(data, query) {
+    if (!data.results || data.results.length === 0) {
+      compareCard.className = 'result-card not-found';
+      compareCard.innerHTML = `
+        <h3 style="margin-top:0;">🔍 No Price Matches Found</h3>
+        <p style="font-size:13px;">Could not find online prices for <strong>${escapeHtml(query)}</strong>. Try fewer keywords (e.g., "Simple Face Wash").</p>
+      `;
+      return;
+    }
+
+    const results = [...data.results].sort((a, b) => a.price - b.price);
+    const cheapest = results[0];
+    const highest = results[results.length - 1];
+    const savings = (highest.price - cheapest.price).toFixed(2);
+
+    let rowsHtml = '';
+    results.forEach((item, index) => {
+      const isBest = index === 0;
+      rowsHtml += `
+        <div class="store-row">
+          <div><strong>${escapeHtml(item.store)}</strong> ${isBest ? '🏆' : ''}</div>
+          <div class="store-price ${isBest ? 'cheapest' : ''}">₹${item.price}</div>
+        </div>
+      `;
+    });
+
+    compareCard.className = 'result-card compare-card';
+    compareCard.innerHTML = `
+      <h3 style="margin-top:0; color:#059669;">💰 Best Price: ₹${cheapest.price} on ${escapeHtml(cheapest.store)}</h3>
+      <p style="font-size:13px; color:#374151; margin-bottom:12px;">Found across ${results.length} platform(s) for <strong>${escapeHtml(query)}</strong>:</p>
+      ${rowsHtml}
+      <p style="font-size:13px; font-weight:700; margin-top:12px; color:#065f46;">
+        🎯 Recommendation: Buy from ${escapeHtml(cheapest.store)}${parseFloat(savings) > 0 ? ` (save ₹${savings} vs ${escapeHtml(highest.store)})` : ''}
+      </p>
+    `;
+  }
+
+  // ================= QUICK-ADD TO SHEET =================
   async function saveNewProduct(barcode) {
     const name = document.getElementById('quick-name').value.trim();
     const price = document.getElementById('quick-price').value.trim();
@@ -230,10 +264,9 @@
           submitted_by: 'Mobile User'
         })
       });
-
-      const out = await res.json();
+      await res.json();
       resultCard.className = "result-card safe";
-      resultCard.innerHTML = `<h3>✅ Saved Successfully!</h3><p>Added <strong>${name}</strong> (₹${price}) to your Store_Prices database.</p>`;
+      resultCard.innerHTML = `<h3>✅ Saved Successfully!</h3><p>Added <strong>${escapeHtml(name)}</strong> (₹${escapeHtml(price)}) to your Store_Prices database.</p>`;
     } catch (e) {
       alert('Error saving product: ' + e);
     }
