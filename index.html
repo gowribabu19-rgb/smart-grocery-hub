@@ -37,13 +37,14 @@
   <div id="result" class="result-card"></div>
 </div>
 
+<!-- Hidden Canvas for Local Image Preprocessing -->
+<canvas id="proc-canvas" style="display:none;"></canvas>
+
 <script>
-  // YOUR N8N PRODUCTION WEBHOOK URL
   const N8N_GATEWAY_URL = 'https://s30.n8n.alexaiautomations.com/webhook/sg02-gateway';
 
   const html5QrCode = new Html5Qrcode("reader");
   const resultCard = document.getElementById('result');
-  let lastScannedBarcode = '';
 
   function startScanner() {
     document.getElementById('start-btn').style.display = 'none';
@@ -54,7 +55,6 @@
       html5QrCode.stop();
       document.getElementById('start-btn').style.display = 'block';
       document.getElementById('start-btn').innerText = '🔄 Scan Another Product';
-      lastScannedBarcode = decodedText;
       analyzeBarcode(decodedText);
     }).catch(err => {
       alert('Camera error: ' + err);
@@ -90,8 +90,7 @@
         <p style="font-size:13px; color:#6b7280;">Barcode: <code>${barcode}</code></p>
         <hr style="border:none; border-top:1px solid #fde68a; margin:10px 0;">
 
-        <!-- 2-STEP DEDICATED OCR BUTTONS -->
-        <label style="font-weight:700; color:#1f2937;">📸 Step 1 & 2: Quick Camera OCR</label>
+        <label style="font-weight:700; color:#1f2937;">📸 Quick Camera OCR</label>
         <div class="ocr-grid">
           <label class="ocr-btn">
             🏷️ 1. Snap Title
@@ -105,7 +104,6 @@
         </div>
         <div id="ocr-status" style="font-size:12px; margin-bottom:12px; font-weight:600;"></div>
 
-        <!-- FORM INPUTS -->
         <label>Product Name:
           <input type="text" id="quick-name" placeholder="Front package name">
         </label>
@@ -135,6 +133,37 @@
     `;
   }
 
+  // 🧠 DETERMINISTIC CLIENT-SIDE PRE-PROCESSOR (Canvas Grayscale + Contrast Binarization)
+  function preprocessImage(file) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.getElementById('proc-canvas');
+        const ctx = canvas.getContext('2d');
+        const maxDim = 1200;
+        let scale = Math.min(maxDim / img.width, maxDim / img.height, 1);
+        canvas.width = img.width * scale;
+        canvas.height = img.height * scale;
+
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+        const d = imgData.data;
+
+        // Grayscale & High Contrast thresholding
+        for (let i = 0; i < d.length; i += 4) {
+          const avg = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
+          const threshold = avg > 120 ? 255 : 0; // Crisp black/white text separation
+          d[i] = threshold;
+          d[i + 1] = threshold;
+          d[i + 2] = threshold;
+        }
+        ctx.putImageData(imgData, 0, 0);
+        resolve(canvas.toDataURL('image/png'));
+      };
+      img.src = URL.createObjectURL(file);
+    });
+  }
+
   // 1. DEDICATED TITLE OCR ENGINE
   async function processTitleOCR(inputElement) {
     const file = inputElement.files[0];
@@ -142,28 +171,30 @@
 
     const status = document.getElementById('ocr-status');
     status.style.color = '#059669';
-    status.innerText = '⏳ Reading front title...';
+    status.innerText = '⏳ Enhancing & scanning title...';
 
     try {
+      const enhancedImg = await preprocessImage(file);
       const worker = await Tesseract.createWorker('eng');
-      const ret = await worker.recognize(file);
+      const ret = await worker.recognize(enhancedImg);
       await worker.terminate();
 
-      const noiseWords = ['NET QTY', 'BATCH', 'MFG', 'EXP', 'USE BY', 'BEST BEFORE', 'PKD', 'MRP', 'INCL', 'TAXES', 'GRAMS', 'MARKETED', 'CUSTOMER', 'WEIGHT'];
+      const noiseWords = ['NET', 'QTY', 'BATCH', 'MFG', 'EXP', 'USE', 'BEST', 'BEFORE', 'PKD', 'MRP', 'INCL', 'TAXES', 'GRAMS', 'MARKETED', 'CUSTOMER', 'WEIGHT', 'FOR', 'FEEDBACK'];
+      
       const lines = ret.data.text.split('\n')
-        .map(l => l.trim())
-        .filter(l => l.length >= 3 && /[a-zA-Z]{3,}/.test(l))
-        .filter(l => !noiseWords.some(w => l.toUpperCase().includes(w)));
+        .map(l => l.replace(/[^a-zA-Z0-9\s]/g, '').trim())
+        .filter(l => l.length >= 4 && /[a-zA-Z]{3,}/.test(l))
+        .filter(l => !noiseWords.some(w => l.toUpperCase().split(' ').includes(w)));
 
       if (lines.length > 0) {
-        // Take the longest prominent clean line
-        const detectedName = lines.reduce((a, b) => a.length > b.length ? a : b);
-        document.getElementById('quick-name').value = detectedName.replace(/^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$/g, '').trim();
+        // Pick the clearest, longest candidate text
+        const bestLine = lines.sort((a, b) => b.length - a.length)[0];
+        document.getElementById('quick-name').value = bestLine;
         status.style.color = '#059669';
-        status.innerText = '✅ Title captured!';
+        status.innerText = `✅ Found: "${bestLine}"`;
       } else {
         status.style.color = '#dc2626';
-        status.innerText = '⚠️ Title unclear. Retake or type manually.';
+        status.innerText = '⚠️ Title unclear. Retake closer or type manually.';
       }
     } catch (err) {
       status.style.color = '#dc2626';
@@ -171,41 +202,35 @@
     }
   }
 
-  // 2. DEDICATED MRP OCR ENGINE
+  // 2. DEDICATED MRP OCR ENGINE (STRICT ANCHORING)
   async function processMrpOCR(inputElement) {
     const file = inputElement.files[0];
     if (!file) return;
 
     const status = document.getElementById('ocr-status');
     status.style.color = '#7c3aed';
-    status.innerText = '⏳ Reading MRP price tag...';
+    status.innerText = '⏳ Enhancing & reading price stamp...';
 
     try {
+      const enhancedImg = await preprocessImage(file);
       const worker = await Tesseract.createWorker('eng');
-      const ret = await worker.recognize(file);
+      const ret = await worker.recognize(enhancedImg);
       await worker.terminate();
 
-      const text = ret.data.text;
+      const text = ret.data.text.replace(/\n/g, ' ');
 
-      // Deterministic Regex for Indian MRP Stamps (MRP, RS, ₹, INR, INCL OF ALL TAXES)
-      const mrpRegex = /(?:M\.?R\.?P\.?|RS\.?|₹|\bINR|TAXES)\s*[:.-]?\s*(\d+(?:\.\d{1,2})?)/i;
-      const match = text.match(mrpRegex);
+      // STRICT DETERMINISTIC REGEX: Must be preceded by MRP, RS, ₹, INR, or TAXES
+      const strictMrpRegex = /(?:M\.?R\.?P\.?|RS\.?|₹|\bINR|\bTAXES)\s*[:.\-=/]?\s*(?:RS\.?|₹)?\s*(\d{2,5}(?:\.\d{1,2})?)/i;
+      const match = text.match(strictMrpRegex);
 
-      if (match && match[1]) {
-        document.getElementById('quick-price').value = parseFloat(match[1]);
+      if (match && match[1] && parseFloat(match[1]) > 5) {
+        const detectedPrice = parseFloat(match[1]);
+        document.getElementById('quick-price').value = detectedPrice;
         status.style.color = '#7c3aed';
-        status.innerText = '✅ Price ₹' + match[1] + ' captured!';
+        status.innerText = `✅ Verified MRP: ₹${detectedPrice}`;
       } else {
-        // Fallback: match standalone decimal numbers (e.g. 140.00 or 299)
-        const numMatch = text.match(/\b\d{2,4}(?:\.\d{2})?\b/);
-        if (numMatch) {
-          document.getElementById('quick-price').value = parseFloat(numMatch[0]);
-          status.style.color = '#7c3aed';
-          status.innerText = '✅ Estimated Price ₹' + numMatch[0] + ' captured!';
-        } else {
-          status.style.color = '#dc2626';
-          status.innerText = '⚠️ MRP stamp not found. Type price manually.';
-        }
+        status.style.color = '#dc2626';
+        status.innerText = '⚠️ No clear MRP found. Point camera closer to "MRP ₹..."';
       }
     } catch (err) {
       status.style.color = '#dc2626';
