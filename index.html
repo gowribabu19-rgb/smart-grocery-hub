@@ -16,25 +16,38 @@
     .not-found { border-left: 6px solid #f59e0b; background: #fffbeb; }
     .banned-tag { background: #fee2e2; color: #dc2626; padding: 3px 8px; border-radius: 6px; font-weight: 600; font-size: 12px; display: inline-block; margin: 2px; }
     button { background: #007aff; color: white; border: none; padding: 12px 20px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; width: 100%; }
-    button.secondary { background: #6b7280; margin-top: 8px; }
+    button.compare-btn { background: #10b981; margin-top: 6px; }
     input { width: 100%; padding: 10px; margin: 6px 0 12px; border: 1px solid #d1d5db; border-radius: 8px; box-sizing: border-box; font-size: 14px; }
     label { font-size: 13px; font-weight: 600; color: #374151; display: block; text-align: left; }
+    .divider { margin: 20px 0; border: none; border-top: 1px solid #e5e7eb; position: relative; }
+    .divider span { position: absolute; top: -10px; left: 50%; transform: translateX(-50%); background: white; padding: 0 10px; color: #9ca3af; font-size: 12px; font-weight: 600; }
+    .store-row { display: flex; justify-content: space-between; align-items: center; padding: 8px 0; border-bottom: 1px solid #e5e7eb; }
+    .store-price { font-weight: 700; color: #111827; }
+    .cheapest { color: #059669; font-weight: 800; }
   </style>
 </head>
 <body>
 
 <div class="container">
   <h1>🛒 Smart Grocery Scanner</h1>
-  <p style="color:#6b7280; font-size:14px; margin-top:-4px;">Scan barcode or price tag</p>
+  <p style="color:#6b7280; font-size:14px; margin-top:-4px;">Scan barcode or compare web prices</p>
 
+  <!-- 1. BARCODE SCANNER SECTION -->
   <div id="reader"></div>
-  <button id="start-btn" onclick="startScanner()">📷 Start Camera</button>
+  <button id="start-btn" onclick="startScanner()">📷 Start Camera Scanner</button>
 
+  <div class="divider"><span>OR</span></div>
+
+  <!-- 2. WEB PRICE COMPARISON SEARCH SECTION -->
+  <label>🔍 Compare Prices Across Platforms:</label>
+  <input type="text" id="web-search-query" placeholder="Paste Amazon title or type product name...">
+  <button class="compare-btn" onclick="compareWebPrices()">⚡ Compare Across Stores</button>
+
+  <!-- RESULTS DISPLAY CARD -->
   <div id="result" class="result-card"></div>
 </div>
 
 <script>
-  // YOUR N8N PRODUCTION WEBHOOK URL
   const N8N_GATEWAY_URL = 'https://s30.n8n.alexaiautomations.com/webhook/sg02-gateway';
 
   const html5QrCode = new Html5Qrcode("reader");
@@ -78,6 +91,62 @@
     }
   }
 
+  // 🌐 NEW: WEB PRICE COMPARISON CALL TO N8N
+  async function compareWebPrices() {
+    const query = document.getElementById('web-search-query').value.trim();
+    if (!query) {
+      alert('Please enter a product name or paste a link/title!');
+      return;
+    }
+
+    resultCard.style.display = 'block';
+    resultCard.className = 'result-card not-found';
+    resultCard.innerHTML = `<p>⏳ Checking live prices across Amazon, Blinkit, Zepto, and BigBasket for <strong>${query}</strong>...</p>`;
+
+    try {
+      const response = await fetch(N8N_GATEWAY_URL, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: 'compare_web', query: query })
+      });
+
+      const data = await response.json();
+      renderComparisonResult(data);
+    } catch (err) {
+      resultCard.className = 'result-card banned';
+      resultCard.innerHTML = `<p>❌ Price comparison service currently connecting. Waiting for n8n configuration.</p>`;
+    }
+  }
+
+  function renderComparisonResult(data) {
+    if (!data.results || data.results.length === 0) {
+      resultCard.className = 'result-card not-found';
+      resultCard.innerHTML = `<h3>🔍 No Price Matches Found</h3><p>Could not find price listings for this item. Check spelling.</p>`;
+      return;
+    }
+
+    let rowsHtml = '';
+    data.results.forEach((item, index) => {
+      const isBest = index === 0;
+      rowsHtml += `
+        <div class="store-row">
+          <div>
+            <strong>${item.store}</strong> ${isBest ? '🏆' : ''}<br>
+            <span style="font-size:12px; color:#6b7280;">${item.title || ''}</span>
+          </div>
+          <div class="store-price ${isBest ? 'cheapest' : ''}">₹${item.price}</div>
+        </div>
+      `;
+    });
+
+    resultCard.className = 'result-card safe';
+    resultCard.innerHTML = `
+      <h3 style="margin-top:0; color:#059669;">💰 Best Price: ₹${data.results[0].price}</h3>
+      <p style="font-size:13px; color:#374151; margin-bottom:12px;">Found across ${data.results.length} platforms:</p>
+      ${rowsHtml}
+    `;
+  }
+
   function renderResult(data, barcode) {
     if (!data.found) {
       resultCard.className = "result-card not-found";
@@ -90,7 +159,7 @@
           <input type="text" id="quick-name" placeholder="e.g., Sensodyne Paste 100g">
         </label>
         <label>Price (₹):
-          <input type="number" id="quick-price" placeholder="e.g., 140">
+          <input type="number" step="0.01" id="quick-price" placeholder="e.g., 140">
         </label>
         <label>Store Name:
           <input type="text" id="quick-store" placeholder="e.g., Apollo Pharmacy">
