@@ -1,12 +1,27 @@
 {
   "name": "Smart Grocery Hub",
   "short_name": "GroceryHub",
-  "start_url": "index.html",
+  "start_url": "/smart-grocery-hub/",
+  "scope": "/smart-grocery-hub/",
   "display": "standalone",
   "background_color": "#ffffff",
   "theme_color": "#007aff",
+  "icons": [
+    {
+      "src": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/df/Shopping_cart_icon.svg/192px-Shopping_cart_icon.svg.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "https://upload.wikimedia.org/wikipedia/commons/thumb/d/df/Shopping_cart_icon.svg/512px-Shopping_cart_icon.svg.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
   "share_target": {
-    "action": "index.html",
+    "action": "/smart-grocery-hub/",
     "method": "GET",
     "params": {
       "title": "title",
