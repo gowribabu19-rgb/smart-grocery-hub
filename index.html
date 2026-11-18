@@ -5,8 +5,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Smart Grocery Scanner</title>
   <script src="https://unpkg.com/html5-qrcode"></script>
-  <!-- Client-Side Zero-AI OCR Engine -->
-  <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
   <style>
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: #f0f2f5; margin: 0; padding: 16px; text-align: center; }
     .container { max-width: 480px; margin: auto; background: white; padding: 20px; border-radius: 16px; box-shadow: 0 4px 14px rgba(0,0,0,0.08); }
@@ -18,9 +16,6 @@
     .not-found { border-left: 6px solid #f59e0b; background: #fffbeb; }
     .banned-tag { background: #fee2e2; color: #dc2626; padding: 3px 8px; border-radius: 6px; font-weight: 600; font-size: 12px; display: inline-block; margin: 2px; }
     button { background: #007aff; color: white; border: none; padding: 12px 20px; border-radius: 10px; font-size: 15px; font-weight: 600; cursor: pointer; width: 100%; }
-    .ocr-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin: 10px 0 14px 0; }
-    .ocr-btn { background: #059669; color: white; padding: 10px 6px; border-radius: 8px; font-size: 13px; font-weight: 600; text-align: center; cursor: pointer; display: block; }
-    .ocr-btn.mrp { background: #7c3aed; }
     input { width: 100%; padding: 10px; margin: 6px 0 12px; border: 1px solid #d1d5db; border-radius: 8px; box-sizing: border-box; font-size: 14px; }
     label { font-size: 13px; font-weight: 600; color: #374151; display: block; text-align: left; }
   </style>
@@ -29,7 +24,7 @@
 
 <div class="container">
   <h1>🛒 Smart Grocery Scanner</h1>
-  <p style="color:#6b7280; font-size:14px; margin-top:-4px;">Scan barcode or snap product label</p>
+  <p style="color:#6b7280; font-size:14px; margin-top:-4px;">Scan barcode or price tag</p>
 
   <div id="reader"></div>
   <button id="start-btn" onclick="startScanner()">📷 Start Camera</button>
@@ -37,10 +32,8 @@
   <div id="result" class="result-card"></div>
 </div>
 
-<!-- Hidden Canvas for Local Image Preprocessing -->
-<canvas id="proc-canvas" style="display:none;"></canvas>
-
 <script>
+  // YOUR N8N PRODUCTION WEBHOOK URL
   const N8N_GATEWAY_URL = 'https://s30.n8n.alexaiautomations.com/webhook/sg02-gateway';
 
   const html5QrCode = new Html5Qrcode("reader");
@@ -87,190 +80,4 @@
       resultCard.className = "result-card not-found";
       resultCard.innerHTML = `
         <h3 style="margin-top:0; color:#b45309;">📦 Product Not In Database</h3>
-        <p style="font-size:13px; color:#6b7280;">Barcode: <code>${barcode}</code></p>
-        <hr style="border:none; border-top:1px solid #fde68a; margin:10px 0;">
-
-        <label style="font-weight:700; color:#1f2937;">📸 Quick Camera OCR</label>
-        <div class="ocr-grid">
-          <label class="ocr-btn">
-            🏷️ 1. Snap Title
-            <input type="file" accept="image/*" capture="environment" style="display:none;" onchange="processTitleOCR(this)">
-          </label>
-
-          <label class="ocr-btn mrp">
-            💰 2. Snap MRP
-            <input type="file" accept="image/*" capture="environment" style="display:none;" onchange="processMrpOCR(this)">
-          </label>
-        </div>
-        <div id="ocr-status" style="font-size:12px; margin-bottom:12px; font-weight:600;"></div>
-
-        <label>Product Name:
-          <input type="text" id="quick-name" placeholder="Front package name">
-        </label>
-        <label>Price (₹):
-          <input type="number" step="0.01" id="quick-price" placeholder="MRP from price stamp">
-        </label>
-        <label>Store Name:
-          <input type="text" id="quick-store" placeholder="e.g., Local Store / Apollo">
-        </label>
-        <button onclick="saveNewProduct('${barcode}')">💾 Save to Smart Grocery Sheet</button>
-      `;
-      return;
-    }
-
-    resultCard.className = "result-card " + (data.is_safe ? "safe" : "banned");
-    resultCard.innerHTML = `
-      <h2 style="margin-top:0; font-size:18px;">${data.product_name}</h2>
-      <p style="font-size:13px; margin:4px 0;"><strong>Brand:</strong> ${data.brand || 'N/A'} | <strong>Size:</strong> ${data.net_weight || 'N/A'}</p>
-      <p style="font-size:14px; font-weight:700; margin:8px 0; color:${data.is_safe ? '#16a34a' : '#dc2626'};">
-        ${data.is_safe ? "✅ SAFE TO BUY - No banned chemicals" : "⚠️ WARNING: Banned Ingredients Detected"}
-      </p>
-      ${!data.is_safe ? `<div style="margin:6px 0;">${data.banned_found.map(b => `<span class="banned-tag">${b}</span>`).join(' ')}</div>` : ''}
-      <details style="margin-top:10px; font-size:12px; color:#4b5563;">
-        <summary style="cursor:pointer; font-weight:600;">View Ingredients</summary>
-        <p style="margin-top:6px; line-height:1.4;">${data.ingredients_text || 'No ingredients listed'}</p>
-      </details>
-    `;
-  }
-
-  // 🧠 DETERMINISTIC CLIENT-SIDE PRE-PROCESSOR (Canvas Grayscale + Contrast Binarization)
-  function preprocessImage(file) {
-    return new Promise((resolve) => {
-      const img = new Image();
-      img.onload = () => {
-        const canvas = document.getElementById('proc-canvas');
-        const ctx = canvas.getContext('2d');
-        const maxDim = 1200;
-        let scale = Math.min(maxDim / img.width, maxDim / img.height, 1);
-        canvas.width = img.width * scale;
-        canvas.height = img.height * scale;
-
-        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-        const d = imgData.data;
-
-        // Grayscale & High Contrast thresholding
-        for (let i = 0; i < d.length; i += 4) {
-          const avg = 0.299 * d[i] + 0.587 * d[i + 1] + 0.114 * d[i + 2];
-          const threshold = avg > 120 ? 255 : 0; // Crisp black/white text separation
-          d[i] = threshold;
-          d[i + 1] = threshold;
-          d[i + 2] = threshold;
-        }
-        ctx.putImageData(imgData, 0, 0);
-        resolve(canvas.toDataURL('image/png'));
-      };
-      img.src = URL.createObjectURL(file);
-    });
-  }
-
-  // 1. DEDICATED TITLE OCR ENGINE
-  async function processTitleOCR(inputElement) {
-    const file = inputElement.files[0];
-    if (!file) return;
-
-    const status = document.getElementById('ocr-status');
-    status.style.color = '#059669';
-    status.innerText = '⏳ Enhancing & scanning title...';
-
-    try {
-      const enhancedImg = await preprocessImage(file);
-      const worker = await Tesseract.createWorker('eng');
-      const ret = await worker.recognize(enhancedImg);
-      await worker.terminate();
-
-      const noiseWords = ['NET', 'QTY', 'BATCH', 'MFG', 'EXP', 'USE', 'BEST', 'BEFORE', 'PKD', 'MRP', 'INCL', 'TAXES', 'GRAMS', 'MARKETED', 'CUSTOMER', 'WEIGHT', 'FOR', 'FEEDBACK'];
-      
-      const lines = ret.data.text.split('\n')
-        .map(l => l.replace(/[^a-zA-Z0-9\s]/g, '').trim())
-        .filter(l => l.length >= 4 && /[a-zA-Z]{3,}/.test(l))
-        .filter(l => !noiseWords.some(w => l.toUpperCase().split(' ').includes(w)));
-
-      if (lines.length > 0) {
-        // Pick the clearest, longest candidate text
-        const bestLine = lines.sort((a, b) => b.length - a.length)[0];
-        document.getElementById('quick-name').value = bestLine;
-        status.style.color = '#059669';
-        status.innerText = `✅ Found: "${bestLine}"`;
-      } else {
-        status.style.color = '#dc2626';
-        status.innerText = '⚠️ Title unclear. Retake closer or type manually.';
-      }
-    } catch (err) {
-      status.style.color = '#dc2626';
-      status.innerText = '❌ Title OCR failed.';
-    }
-  }
-
-  // 2. DEDICATED MRP OCR ENGINE (STRICT ANCHORING)
-  async function processMrpOCR(inputElement) {
-    const file = inputElement.files[0];
-    if (!file) return;
-
-    const status = document.getElementById('ocr-status');
-    status.style.color = '#7c3aed';
-    status.innerText = '⏳ Enhancing & reading price stamp...';
-
-    try {
-      const enhancedImg = await preprocessImage(file);
-      const worker = await Tesseract.createWorker('eng');
-      const ret = await worker.recognize(enhancedImg);
-      await worker.terminate();
-
-      const text = ret.data.text.replace(/\n/g, ' ');
-
-      // STRICT DETERMINISTIC REGEX: Must be preceded by MRP, RS, ₹, INR, or TAXES
-      const strictMrpRegex = /(?:M\.?R\.?P\.?|RS\.?|₹|\bINR|\bTAXES)\s*[:.\-=/]?\s*(?:RS\.?|₹)?\s*(\d{2,5}(?:\.\d{1,2})?)/i;
-      const match = text.match(strictMrpRegex);
-
-      if (match && match[1] && parseFloat(match[1]) > 5) {
-        const detectedPrice = parseFloat(match[1]);
-        document.getElementById('quick-price').value = detectedPrice;
-        status.style.color = '#7c3aed';
-        status.innerText = `✅ Verified MRP: ₹${detectedPrice}`;
-      } else {
-        status.style.color = '#dc2626';
-        status.innerText = '⚠️ No clear MRP found. Point camera closer to "MRP ₹..."';
-      }
-    } catch (err) {
-      status.style.color = '#dc2626';
-      status.innerText = '❌ MRP OCR failed.';
-    }
-  }
-
-  async function saveNewProduct(barcode) {
-    const name = document.getElementById('quick-name').value.trim();
-    const price = document.getElementById('quick-price').value.trim();
-    const store = document.getElementById('quick-store').value.trim();
-
-    if (!name || !price) {
-      alert('Please enter at least Product Name and Price!');
-      return;
-    }
-
-    resultCard.innerHTML = "<p>⏳ Saving to Google Sheets...</p>";
-
-    try {
-      const res = await fetch(N8N_GATEWAY_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          mode: 'crowd_submit',
-          barcode: barcode,
-          canonical_name: name,
-          price: parseFloat(price),
-          store_name: store || 'Local Shop',
-          submitted_by: 'Mobile User'
-        })
-      });
-
-      const out = await res.json();
-      resultCard.className = "result-card safe";
-      resultCard.innerHTML = `<h3>✅ Saved Successfully!</h3><p>Added <strong>${name}</strong> (₹${price}) to your Store_Prices database.</p>`;
-    } catch (e) {
-      alert('Error saving product: ' + e);
-    }
-  }
-</script>
-</body>
-</html>
+        <p style="font-size:13px; 
