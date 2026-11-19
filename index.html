@@ -276,9 +276,11 @@
 <script>
 (function () {
   var KEY = 'sg_pincode';
+  var STORES = ['Blinkit', 'Zepto', 'Swiggy Instamart', 'Amazon Fresh', 'BigBasket'];
   var saved = '';
   try { saved = localStorage.getItem(KEY) || ''; } catch (e) {}
 
+  // Pincode box
   var bar = document.createElement('div');
   bar.style.cssText = 'max-width:520px;margin:12px auto 0;padding:10px 14px;background:#fff;border-radius:14px;box-shadow:0 2px 8px rgba(0,0,0,.08);display:flex;align-items:center;gap:8px;font-family:Roboto,Arial,sans-serif;font-size:15px';
   var label = document.createElement('span');
@@ -298,6 +300,24 @@
   bar.appendChild(input);
   document.body.insertBefore(bar, document.body.firstChild);
 
+  // Store suggestions for the quick-add form
+  var dl = document.createElement('datalist');
+  dl.id = 'sg-stores';
+  STORES.forEach(function (s) {
+    var o = document.createElement('option');
+    o.value = s;
+    dl.appendChild(o);
+  });
+  document.body.appendChild(dl);
+  new MutationObserver(function () {
+    var el = document.getElementById('quick-store');
+    if (el && !el.getAttribute('list')) {
+      el.setAttribute('list', 'sg-stores');
+      el.placeholder = 'Blinkit, Zepto, Swiggy Instamart...';
+    }
+  }).observe(document.body, { childList: true, subtree: true });
+
+  // Send the pincode, and show an error when the server fails
   var origFetch = window.fetch;
   window.fetch = function (url, opts) {
     try {
@@ -307,7 +327,13 @@
         opts.body = JSON.stringify(o);
       }
     } catch (e) {}
-    return origFetch.apply(this, arguments);
+    var isGateway = String(url).indexOf('/webhook/') !== -1;
+    return origFetch.apply(this, arguments).then(function (r) {
+      if (isGateway && !r.ok) {
+        throw new Error('The server could not save this. Please check the store name (Blinkit, Zepto, Swiggy Instamart, Amazon Fresh or BigBasket) and the price.');
+      }
+      return r;
+    });
   };
 })();
 </script>
