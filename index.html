@@ -273,5 +273,43 @@
   }
 </script>
 <a href="list.html" style="position:fixed;bottom:16px;left:50%;transform:translateX(-50%);background:#10b981;color:#fff;padding:14px 22px;border-radius:30px;text-decoration:none;font-size:16px;box-shadow:0 4px 12px rgba(0,0,0,.25);z-index:999">📝 Scan Monthly List</a>
+<script>
+(function () {
+  var KEY = 'sg_pincode';
+  var saved = '';
+  try { saved = localStorage.getItem(KEY) || ''; } catch (e) {}
+
+  var bar = document.createElement('div');
+  bar.style.cssText = 'max-width:520px;margin:12px auto 0;padding:10px 14px;background:#fff;border-radius:14px;box-shadow:0 2px 8px rgba(0,0,0,.08);display:flex;align-items:center;gap:8px;font-family:Roboto,Arial,sans-serif;font-size:15px';
+  var label = document.createElement('span');
+  label.textContent = '📍 Your pincode:';
+  var input = document.createElement('input');
+  input.type = 'text';
+  input.inputMode = 'numeric';
+  input.maxLength = 6;
+  input.placeholder = '600017';
+  input.value = saved;
+  input.style.cssText = 'flex:1;padding:8px;border:1px solid #d1d5db;border-radius:8px;font-size:16px';
+  input.addEventListener('input', function () {
+    input.value = input.value.replace(/\D/g, '').slice(0, 6);
+    try { localStorage.setItem(KEY, input.value); } catch (e) {}
+  });
+  bar.appendChild(label);
+  bar.appendChild(input);
+  document.body.insertBefore(bar, document.body.firstChild);
+
+  var origFetch = window.fetch;
+  window.fetch = function (url, opts) {
+    try {
+      if (opts && typeof opts.body === 'string' && opts.body.charAt(0) === '{' && /^\d{6}$/.test(input.value)) {
+        var o = JSON.parse(opts.body);
+        o.pincode = input.value;
+        opts.body = JSON.stringify(o);
+      }
+    } catch (e) {}
+    return origFetch.apply(this, arguments);
+  };
+})();
+</script>
 </body>
 </html>
